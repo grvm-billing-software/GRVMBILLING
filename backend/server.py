@@ -61,7 +61,7 @@ def get_object(path: str) -> bytes:
     return resp.content
 HOSPITAL_WHATSAPP = os.environ.get("HOSPITAL_WHATSAPP", "")
 
-client = AsyncIOMotorClient(MONGO_URL)
+client = AsyncIOMotorClient(MONGO_URL)#
 db = client[DB_NAME]
 
 app = FastAPI(title="GRVM Hospital Billing API")
