@@ -22,7 +22,7 @@ from starlette.middleware.cors import CORSMiddleware
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
 
-MONGO_URL = os.environ["MONGO_URL"]
+MONGO_URL = os.environ.get("MONGO_URL", "")
 DB_NAME = os.environ["DB_NAME"]
 APP_PASSWORD = os.environ["APP_PASSWORD"]
 HOSPITAL_NAME = os.environ["HOSPITAL_NAME"]
@@ -61,8 +61,27 @@ def get_object(path: str) -> bytes:
     return resp.content
 HOSPITAL_WHATSAPP = os.environ.get("HOSPITAL_WHATSAPP", "")
 
-client = AsyncIOMotorClient(MONGO_URL)#
-db = client[DB_NAME]
+def safe_mongo_url(url: str) -> str:
+    scheme, sep, rest = url.partition("://")
+    if not sep or "@" not in rest:
+        return url
+    creds, _, hosts = rest.rpartition("@")
+    user, has_pw, pw = creds.partition(":")
+    enc = lambda v: urllib.parse.quote_plus(urllib.parse.unquote_plus(v))
+    return f"{scheme}://{enc(user)}{':' + enc(pw) if has_pw else ''}@{hosts}"
+
+
+client = None
+db = None
+db_error = ""
+try:
+    if not MONGO_URL:
+        raise ValueError("MONGO_URL is not set")
+    client = AsyncIOMotorClient(safe_mongo_url(MONGO_URL), serverSelectionTimeoutMS=8000)
+    db = client[DB_NAME]
+except Exception as e:
+    db_error = str(e)
+    logging.getLogger("hospital").error("MongoDB client init failed: %s", e)
 
 app = FastAPI(title="GRVM Hospital Billing API")
 api = APIRouter(prefix="/api")
@@ -498,6 +517,17 @@ def invoice_body(patient_name: str, invoice_no: str, total: float) -> str:
 @api.get("/")
 async def root():
     return {"name": "GRVM Hospital Billing API", "version": "1.0"}
+
+
+@api.get("/health")
+async def health():
+    if db is None:
+        return JSONResponse(status_code=503, content={"status": "error", "database": "not configured", "detail": db_error})
+    try:
+        await client.admin.command("ping")
+        return {"status": "ok", "database": "connected"}
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"status": "error", "database": "unreachable", "detail": str(e)[:300]})
 
 
 @api.post("/auth/login")
@@ -1359,8 +1389,25 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def db_guard(request: Request, call_next):
+    if db is None and request.url.path.startswith("/api") and request.url.path not in ("/api", "/api/", "/api/health"):
+        return JSONResponse(status_code=503, content={"detail": "Database is not connected. Check MONGO_URL."}, headers={"Access-Control-Allow-Origin": "*"})
+    return await call_next(request)
+
+
 @app.on_event("startup")
 async def startup_indexes():
+    if db is None:
+        logger.error("Starting without database: %s", db_error)
+        return
+    try:
+        await startup_db_setup()
+    except Exception as e:
+        logger.error("MongoDB not reachable at startup, server keeps running: %s", e)
+
+
+async def startup_db_setup():
     await refresh_cfg_globals()
     for name, col, field, prefix in (("bill", "bills", "invoiceNumber", "INV-"),):
         nums = [int(d[field].replace(prefix, "")) - 1000 async for d in db[col].find({}, {field: 1}) if d.get(field, "").replace(prefix, "").isdigit()]
@@ -1383,4 +1430,5 @@ async def startup_indexes():
 
 @app.on_event("shutdown")
 async def shutdown():
-    client.close()
+    if client is not None:
+        client.close()
