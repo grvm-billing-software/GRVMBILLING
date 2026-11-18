@@ -1,0 +1,98 @@
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700&family=Source+Code+Pro:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --brand: 196 80% 25%;
+  --brand-hover: 198 78% 19%;
+  --brand-light: 194 48% 94%;
+  --sage: 180 46% 33%;
+  --surface: 150 20% 98%;
+  --surface-elev: 155 15% 95%;
+  --border-soft: 150 10% 90%;
+  --ink: 215 30% 15%;
+  --ink-soft: 215 15% 42%;
+  --wa: 142 70% 49%;
+}
+
+html, body {
+  margin: 0;
+  background: hsl(var(--surface));
+  color: hsl(var(--ink));
+  font-family: "Manrope", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, .font-display {
+  font-family: "Outfit", sans-serif;
+  letter-spacing: -0.015em;
+}
+
+.font-mono {
+  font-family: "Source Code Pro", monospace;
+}
+
+@layer base {
+  :root {
+    --background: 150 20% 98%;
+    --foreground: 215 30% 15%;
+    --card: 0 0% 100%;
+    --card-foreground: 215 30% 15%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 215 30% 15%;
+    --primary: 196 80% 25%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 155 15% 95%;
+    --secondary-foreground: 215 30% 15%;
+    --muted: 155 15% 95%;
+    --muted-foreground: 215 15% 42%;
+    --accent: 180 46% 33%;
+    --accent-foreground: 0 0% 100%;
+    --destructive: 0 72% 51%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 150 10% 90%;
+    --input: 150 10% 90%;
+    --ring: 196 80% 25%;
+    --radius: 0.75rem;
+  }
+}
+
+@layer base {
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; }
+}
+
+.card-hover { transition: box-shadow 0.25s ease, transform 0.25s ease; }
+.card-hover:hover { box-shadow: 0 10px 30px -15px rgba(13, 92, 117, 0.25); transform: translateY(-2px); }
+
+.sidebar-link {
+  @apply flex items-center gap-3 px-4 py-2.5 rounded-lg text-slate-600 hover:bg-[hsl(var(--brand-light))] hover:text-[hsl(var(--brand))] transition-colors text-sm font-medium;
+}
+.sidebar-link.active {
+  @apply bg-[hsl(var(--brand))] text-white hover:bg-[hsl(var(--brand-hover))] hover:text-white;
+}
+.stat-card {
+  @apply bg-white rounded-xl border border-slate-200 p-5 card-hover;
+}
+.badge-soft {
+  @apply inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1 rounded-full;
+}
+.grain-bg {
+  background-image: radial-gradient(hsl(150 10% 88%) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+@page { size: A4 portrait; margin: 12mm; }
+@media print {
+  html, body { background: #fff !important; }
+  body * { visibility: hidden; }
+  .print-area, .print-area * { visibility: visible; }
+  .print-area { position: absolute; left: 0; top: 0; width: 100% !important; max-width: none !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; }
+  .print-area > .print-body { padding: 0 !important; }
+  .print-overlay { position: static !important; background: none !important; padding: 0 !important; overflow: visible !important; }
+  .no-print { display: none !important; }
+  tr { page-break-inside: avoid; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+}

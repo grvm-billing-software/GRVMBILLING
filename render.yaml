@@ -1,0 +1,42 @@
+services:
+  - type: web
+    name: grvm-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn server:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: MONGO_URL
+        sync: false
+      - key: DB_NAME
+        value: grvm_hospital
+      - key: APP_PASSWORD
+        sync: false
+      - key: HOSPITAL_NAME
+        value: GRVM MEDICAL CENTRE
+      - key: HOSPITAL_ADDRESS
+        value: NH-31, In Front of Powerhouse, Manpur, Chitbadagaon, Ballia, U.P.
+      - key: HOSPITAL_WHATSAPP
+        value: ""
+      - key: EMERGENT_LLM_KEY
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+
+  - type: web
+    name: grvm-frontend
+    runtime: static
+    rootDir: frontend
+    buildCommand: yarn install --frozen-lockfile && yarn build
+    staticPublishPath: build
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: REACT_APP_BACKEND_URL
+        sync: false
+      - key: NODE_VERSION
+        value: 24
