@@ -154,10 +154,11 @@ class Medicine(BaseModel):
     dispatchDate: Optional[str] = None
     receiveDate: Optional[str] = None
     expiryDate: str
-    quantity: int = 0
+    quantity: float = 0
     sellingCost: float
     mrp: float
     tabletsPerStrip: int = 0
+    medicineType: str = "Tablet"
     supplier: str = ""
     location: str = ""
     notes: str = ""
@@ -170,10 +171,11 @@ class MedicineCreate(BaseModel):
     dispatchDate: Optional[str] = None
     receiveDate: Optional[str] = None
     expiryDate: str
-    quantity: int = 0
+    quantity: float = 0
     sellingCost: float
     mrp: float
     tabletsPerStrip: int = 0
+    medicineType: str = "Tablet"
     supplier: str = ""
     location: str = ""
     notes: str = ""
@@ -296,7 +298,8 @@ class BillLine(BaseModel):
     medicineId: str
     medicineName: str
     batchNumber: str = ""
-    quantity: int
+    quantity: float
+    tablets: Optional[int] = None
     unitPrice: float
     lineTotal: float = 0
     expiryDate: str = ""
@@ -402,6 +405,30 @@ class WhatsAppMessage(BaseModel):
 async def next_seq(name: str) -> int:
     doc = await db.counters.find_one_and_update({"_id": name}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
     return doc["seq"]
+
+
+MED_TYPES = ["Tablet", "Capsule", "Injection", "Syrup", "Powder", "Other"]
+
+
+def inc_qty(delta: float) -> list:
+    return [{"$set": {"quantity": {"$round": [{"$add": [{"$ifNull": ["$quantity", 0]}, delta]}, 4]}}}]
+
+
+def strips_for(med: dict, quantity: float, tablets: Optional[int]) -> float:
+    if tablets:
+        tps = med.get("tabletsPerStrip") or 0
+        if tps <= 0:
+            raise HTTPException(400, f"Set 'tablets per strip' for {med['name']} first")
+        quantity = tablets / tps
+    quantity = round(quantity, 4)
+    if quantity <= 0:
+        raise HTTPException(400, "Quantity must be more than 0")
+    return quantity
+
+
+def qty_label(quantity: float, tablets: Optional[int]) -> str:
+    q = f"{quantity:g}" if quantity != int(quantity) else str(int(quantity))
+    return f"{q} ({tablets} tab)" if tablets else q
 
 
 def clean_patch(body: dict) -> dict:
@@ -656,6 +683,10 @@ async def list_medicines(search: str = "", stock: str = "all", expiry: str = "al
 
 @api.post("/medicines", dependencies=[Depends(auth_check)])
 async def create_medicine(body: MedicineCreate):
+    if body.medicineType not in MED_TYPES:
+        raise HTTPException(400, "Invalid medicine type")
+    if body.quantity < 0 or body.tabletsPerStrip < 0:
+        raise HTTPException(400, "Numbers cannot be negative")
     m = Medicine(**body.model_dump())
     await db.medicines.insert_one(m.model_dump())
     await db.inventory_logs.insert_one({
@@ -673,6 +704,10 @@ async def update_medicine(mid: str, body: dict):
         raise HTTPException(404, "Medicine not found")
     before = existing.get("quantity", 0)
     body = clean_patch(body)
+    if "medicineType" in body and body["medicineType"] not in MED_TYPES:
+        raise HTTPException(400, "Invalid medicine type")
+    if any(isinstance(body.get(k), (int, float)) and body[k] < 0 for k in ("quantity", "tabletsPerStrip", "sellingCost", "mrp")):
+        raise HTTPException(400, "Numbers cannot be negative")
     await db.medicines.update_one({"id": mid}, {"$set": body})
     updated = await db.medicines.find_one({"id": mid}, {"_id": 0})
     if "quantity" in body and body["quantity"] != before:
@@ -700,7 +735,8 @@ async def inventory_logs(limit: int = 100):
 class FamilyDispatchCreate(BaseModel):
     memberName: str
     medicineId: str
-    quantity: int = Field(gt=0)
+    quantity: float = Field(default=0, ge=0)
+    tablets: Optional[int] = Field(default=None, gt=0)
     date: Optional[str] = None
     givenBy: str = ""
     notes: str = ""
@@ -724,11 +760,15 @@ async def create_family(body: FamilyDispatchCreate):
         date.fromisoformat(d)
     except ValueError:
         raise HTTPException(400, "Invalid date")
-    med = await db.medicines.find_one_and_update({"id": body.medicineId, "quantity": {"$gte": body.quantity}}, {"$inc": {"quantity": -body.quantity}}, return_document=True)
+    found = await db.medicines.find_one({"id": body.medicineId}, {"_id": 0})
+    if not found:
+        raise HTTPException(404, "Medicine not found")
+    body.quantity = strips_for(found, body.quantity, body.tablets)
+    med = await db.medicines.find_one_and_update({"id": body.medicineId, "quantity": {"$gte": body.quantity}}, inc_qty(-body.quantity), return_document=True)
     if not med:
-        raise HTTPException(409, "Medicine not found or not enough stock")
+        raise HTTPException(409, "Not enough stock")
     rec = {"id": new_id(), "memberName": body.memberName.strip(), "medicineId": med["id"], "medicineName": med["name"], "batchNumber": med["batchNumber"],
-           "quantity": body.quantity, "date": d, "givenBy": body.givenBy.strip(), "notes": body.notes.strip(), "createdAt": iso(now())}
+           "quantity": body.quantity, "tablets": body.tablets, "date": d, "givenBy": body.givenBy.strip(), "notes": body.notes.strip(), "createdAt": iso(now())}
     await db.family_dispatches.insert_one(dict(rec))
     await db.inventory_logs.insert_one({
         "id": new_id(), "medicineId": med["id"], "medicineName": med["name"], "batchNumber": med["batchNumber"], "action": "family",
@@ -742,7 +782,7 @@ async def delete_family(fid: str):
     rec = await db.family_dispatches.find_one_and_delete({"id": fid})
     if not rec:
         raise HTTPException(404, "Record not found")
-    med = await db.medicines.find_one_and_update({"id": rec["medicineId"]}, {"$inc": {"quantity": rec["quantity"]}}, return_document=True)
+    med = await db.medicines.find_one_and_update({"id": rec["medicineId"]}, inc_qty(rec["quantity"]), return_document=True)
     if med:
         await db.inventory_logs.insert_one({
             "id": new_id(), "medicineId": med["id"], "medicineName": med["name"], "batchNumber": med["batchNumber"], "action": "returned",
@@ -863,7 +903,8 @@ async def discharge_patient(pid: str, body: DischargeBody):
 class IPDItemCreate(BaseModel):
     medicineId: Optional[str] = None
     name: str = ""
-    quantity: int = Field(default=1, gt=0)
+    quantity: float = Field(default=1, ge=0)
+    tablets: Optional[int] = Field(default=None, gt=0)
     unitPrice: float = Field(default=0, ge=0)
     date: Optional[str] = None
     notes: str = ""
@@ -878,9 +919,15 @@ async def add_ipd_item(aid: str, body: IPDItemCreate):
             "name": body.name.strip(), "quantity": body.quantity, "unitPrice": body.unitPrice, "amount": round(body.quantity * body.unitPrice, 2),
             "date": (body.date or ist_today().isoformat())[:10], "notes": body.notes.strip(), "billed": False, "billId": None, "createdAt": iso(now())}
     if body.medicineId:
-        med = await db.medicines.find_one_and_update({"id": body.medicineId, "quantity": {"$gte": body.quantity}}, {"$inc": {"quantity": -body.quantity}}, return_document=True)
+        found = await db.medicines.find_one({"id": body.medicineId}, {"_id": 0})
+        if not found:
+            raise HTTPException(404, "Medicine not found")
+        body.quantity = strips_for(found, body.quantity, body.tablets)
+        item["quantity"], item["tablets"] = body.quantity, body.tablets
+        item["amount"] = round(body.quantity * body.unitPrice, 2)
+        med = await db.medicines.find_one_and_update({"id": body.medicineId, "quantity": {"$gte": body.quantity}}, inc_qty(-body.quantity), return_document=True)
         if not med:
-            raise HTTPException(409, "Medicine not found or not enough stock")
+            raise HTTPException(409, "Not enough stock")
         item["name"], item["batchNumber"] = med["name"], med["batchNumber"]
         await db.inventory_logs.insert_one({
             "id": new_id(), "medicineId": med["id"], "medicineName": med["name"], "batchNumber": med["batchNumber"], "action": "ipd_use",
@@ -888,6 +935,8 @@ async def add_ipd_item(aid: str, body: IPDItemCreate):
             "createdAt": iso(now()), "notes": f"Used for IPD patient {adm['patientName']}"})
     if not item["name"]:
         raise HTTPException(400, "Item name is required")
+    if item["quantity"] <= 0:
+        raise HTTPException(400, "Quantity must be more than 0")
     await db.ipd_items.insert_one(dict(item))
     return item
 
@@ -901,7 +950,7 @@ async def delete_ipd_item(aid: str, iid: str):
         raise HTTPException(400, "This item is already on an invoice; cancel the invoice first")
     await db.ipd_items.delete_one({"id": iid})
     if item.get("medicineId"):
-        med = await db.medicines.find_one_and_update({"id": item["medicineId"]}, {"$inc": {"quantity": item["quantity"]}}, return_document=True)
+        med = await db.medicines.find_one_and_update({"id": item["medicineId"]}, inc_qty(item["quantity"]), return_document=True)
         if med:
             await db.inventory_logs.insert_one({
                 "id": new_id(), "medicineId": med["id"], "medicineName": med["name"], "batchNumber": med["batchNumber"], "action": "returned",
@@ -1104,7 +1153,7 @@ async def delete_ipd(aid: str):
         raise HTTPException(400, "This admission has items on an invoice; cancel the invoice first")
     async for item in db.ipd_items.find({"admissionId": aid}, {"_id": 0}):
         if item.get("medicineId"):
-            med = await db.medicines.find_one_and_update({"id": item["medicineId"]}, {"$inc": {"quantity": item["quantity"]}}, return_document=True)
+            med = await db.medicines.find_one_and_update({"id": item["medicineId"]}, inc_qty(item["quantity"]), return_document=True)
             if med:
                 await db.inventory_logs.insert_one({
                     "id": new_id(), "medicineId": med["id"], "medicineName": med["name"], "batchNumber": med["batchNumber"], "action": "returned",
@@ -1171,7 +1220,7 @@ async def list_bills(search: str = ""):
 
 @api.post("/bills", dependencies=[Depends(auth_check)])
 async def create_bill(body: BillCreate):
-    if any(l.quantity <= 0 or l.unitPrice < 0 for l in body.lines):
+    if any((l.quantity <= 0 and not l.tablets) or l.unitPrice < 0 for l in body.lines):
         raise HTTPException(400, "Quantity must be positive")
     charges = [c for c in body.charges if c.label.strip() and c.amount]
     if min([body.opdFee, body.ipdFee, body.labFee, body.discount] + [c.amount for c in charges]) < 0:
@@ -1184,6 +1233,7 @@ async def create_bill(body: BillCreate):
         med = await db.medicines.find_one({"id": line.medicineId}, {"_id": 0})
         if not med:
             raise HTTPException(404, f"Medicine {line.medicineId} missing")
+        line.quantity = strips_for(med, line.quantity, line.tablets)
         if (med.get("quantity") or 0) < line.quantity:
             raise HTTPException(409, f"Insufficient stock for {med['name']}")
         line.medicineName, line.batchNumber = med["name"], med["batchNumber"]
@@ -1214,10 +1264,10 @@ async def create_bill(body: BillCreate):
     done = []
     for line in bill.lines:
         med = await db.medicines.find_one_and_update(
-            {"id": line.medicineId, "quantity": {"$gte": line.quantity}}, {"$inc": {"quantity": -line.quantity}})
+            {"id": line.medicineId, "quantity": {"$gte": line.quantity}}, inc_qty(-line.quantity))
         if not med:
             for mid, q in done:
-                await db.medicines.update_one({"id": mid}, {"$inc": {"quantity": q}})
+                await db.medicines.update_one({"id": mid}, inc_qty(q))
             raise HTTPException(409, f"Insufficient stock for {line.medicineName}")
         done.append((line.medicineId, line.quantity))
     await db.bills.insert_one(bill.model_dump())
@@ -1251,7 +1301,7 @@ async def cancel_bill(bid: str, body: dict = None):
         raise HTTPException(404, "Invoice not found or already cancelled")
     await db.ipd_items.update_many({"billId": bid}, {"$set": {"billed": False, "billId": None}})
     for line in bill.get("lines", []):
-        med = await db.medicines.find_one_and_update({"id": line["medicineId"]}, {"$inc": {"quantity": line["quantity"]}}, return_document=True)
+        med = await db.medicines.find_one_and_update({"id": line["medicineId"]}, inc_qty(line["quantity"]), return_document=True)
         if med:
             await db.inventory_logs.insert_one({
                 "id": new_id(), "medicineId": line["medicineId"], "medicineName": line["medicineName"], "batchNumber": line.get("batchNumber", ""),

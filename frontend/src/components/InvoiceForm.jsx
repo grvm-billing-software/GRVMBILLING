@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api, localDate } from "../lib/api";
 import { toast } from "sonner";
 import { Trash2 } from "lucide-react";
+import { QtyInput, qtyPayload } from "./QtyInput";
+import { fmtQty, qtyLabel, toStrips } from "../lib/api";
 
 const today = () => localDate();
 
@@ -18,15 +20,17 @@ export const InvoiceForm = ({ meds, settings, initial, onSaved, onClose }) => {
   }, [initial.patientId]);
   const addedIds = charges.filter((c) => c.ipdItemId).map((c) => c.ipdItemId);
   const pendingItems = ipdItems.filter((i) => !addedIds.includes(i.id));
-  const addIpdItems = () => setCharges([...charges, ...pendingItems.map((i) => ({ label: `${i.name} × ${i.quantity} (IPD ${new Date(i.date).toLocaleDateString("en-IN")})`, amount: i.amount, ipdItemId: i.id }))]);
+  const addIpdItems = () => setCharges([...charges, ...pendingItems.map((i) => ({ label: `${i.name} × ${qtyLabel(i.quantity, i.tablets)} (IPD ${new Date(i.date).toLocaleDateString("en-IN")})`, amount: i.amount, ipdItemId: i.id }))]);
 
   const setLine = (i, patch) => setLines(lines.map((l, x) => (x === i ? { ...l, ...patch } : l)));
   const pickMed = (i, id) => {
     const m = meds.find((x) => x.id === id);
-    setLine(i, m ? { medicineId: m.id, medicineName: m.name, batchNumber: m.batchNumber, unitPrice: m.sellingCost } : { medicineId: "" });
+    setLine(i, m ? { medicineId: m.id, medicineName: m.name, batchNumber: m.batchNumber, unitPrice: m.sellingCost, unit: "strip" } : { medicineId: "" });
   };
+  const medOf = (l) => meds.find((m) => m.id === l.medicineId);
+  const strips = (l) => toStrips(medOf(l), l.unit, l.quantity);
   const setCharge = (i, patch) => setCharges(charges.map((c, x) => (x === i ? { ...c, ...patch } : c)));
-  const medTotal = lines.reduce((s, l) => s + Number(l.quantity || 0) * Number(l.unitPrice || 0), 0);
+  const medTotal = lines.reduce((s, l) => s + strips(l) * Number(l.unitPrice || 0), 0);
   const chargeTotal = charges.reduce((s, c) => s + Number(c.amount || 0), 0);
   const total = medTotal + chargeTotal - Number(form.discount || 0);
 
@@ -34,8 +38,9 @@ export const InvoiceForm = ({ meds, settings, initial, onSaved, onClose }) => {
     if (!form.patientName.trim()) return toast.error("Patient name is required");
     const good = lines.filter((l) => l.medicineId);
     if (good.length === 0 && chargeTotal <= 0) return toast.error("Add a medicine or a charge first");
-    const over = good.find((l) => Number(l.quantity) > (meds.find((m) => m.id === l.medicineId)?.quantity ?? 0));
-    if (over) return toast.error(`Not enough stock for ${over.medicineName}`);
+    if (good.some((l) => !(strips(l) > 0))) return toast.error("Quantity must be more than 0");
+    const over = good.find((l) => strips(l) > (medOf(l)?.quantity ?? 0) + 1e-9);
+    if (over) return toast.error(`Not enough stock for ${over.medicineName} (only ${fmtQty(medOf(over)?.quantity)} strip left)`);
     if (total < 0) return toast.error("Discount is more than the bill");
     if (dis.on && !dis.revisitDate) return toast.error("Please choose the revisit date for discharge");
     setSaving(true);
@@ -45,7 +50,7 @@ export const InvoiceForm = ({ meds, settings, initial, onSaved, onClose }) => {
         discount: Number(form.discount || 0),
         ipdItemIds: addedIds,
         charges: charges.filter((c) => c.label.trim() && Number(c.amount) > 0).map((c) => ({ label: c.label.trim(), amount: Number(c.amount) })),
-        lines: good.map((l) => ({ medicineId: l.medicineId, medicineName: l.medicineName, batchNumber: l.batchNumber, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice) })),
+        lines: good.map((l) => ({ medicineId: l.medicineId, medicineName: l.medicineName, batchNumber: l.batchNumber, ...qtyPayload(medOf(l), l.unit, l.quantity), unitPrice: Number(l.unitPrice) })),
       });
       toast.success(`Invoice ${data.invoiceNumber} created`);
       if (dis.on) {
@@ -71,17 +76,17 @@ export const InvoiceForm = ({ meds, settings, initial, onSaved, onClose }) => {
         <Section title="Medicines (A to Z)">
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-12 gap-2 items-center">
-              <select data-testid={`bill-line-med-${i}`} value={l.medicineId} onChange={(e) => pickMed(i, e.target.value)} className="inp col-span-6">
+              <select data-testid={`bill-line-med-${i}`} value={l.medicineId} onChange={(e) => pickMed(i, e.target.value)} className="inp col-span-5">
                 <option value="">Select medicine</option>
-                {meds.map((m) => <option key={m.id} value={m.id} disabled={m.quantity <= 0}>{m.name} · {m.batchNumber} · exp {m.expiryDate} · stock {m.quantity}</option>)}
+                {meds.map((m) => <option key={m.id} value={m.id} disabled={m.quantity <= 0}>{m.name} · {m.batchNumber} · exp {m.expiryDate} · stock {fmtQty(m.quantity)}{m.tabletsPerStrip ? ` × ${m.tabletsPerStrip} tab` : ""}</option>)}
               </select>
-              <input data-testid={`bill-line-qty-${i}`} type="number" min="1" title="Quantity" value={l.quantity} onChange={(e) => setLine(i, { quantity: e.target.value })} className="inp col-span-2" />
-              <input data-testid={`bill-line-rate-${i}`} type="number" min="0" title="Rate" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: e.target.value })} className="inp col-span-2" />
-              <span className="col-span-1 text-right font-mono text-xs">₹{(Number(l.quantity || 0) * Number(l.unitPrice || 0)).toFixed(2)}</span>
+              <QtyInput testid={`bill-line-qty-${i}`} med={medOf(l)} unit={l.unit} qty={l.quantity} onChange={(v) => setLine(i, { unit: v.unit, quantity: v.qty })} className="col-span-3" />
+              <input data-testid={`bill-line-rate-${i}`} type="number" min="0" title="Rate per strip" value={l.unitPrice} onChange={(e) => setLine(i, { unitPrice: e.target.value })} className="inp col-span-2" />
+              <span className="col-span-1 text-right font-mono text-xs">₹{(strips(l) * Number(l.unitPrice || 0)).toFixed(2)}</span>
               <button onClick={() => setLines(lines.filter((_, x) => x !== i))} className="text-red-600 justify-self-end"><Trash2 className="w-4 h-4" /></button>
             </div>
           ))}
-          <button data-testid="bill-add-line-btn" onClick={() => setLines([...lines, { medicineId: "", quantity: 1, unitPrice: 0 }])} className="text-sm text-[hsl(var(--brand))] font-semibold">+ Add medicine</button>
+          <button data-testid="bill-add-line-btn" onClick={() => setLines([...lines, { medicineId: "", quantity: 1, unit: "strip", unitPrice: 0 }])} className="text-sm text-[hsl(var(--brand))] font-semibold">+ Add medicine</button>
         </Section>
 
         <Section title="Charges">

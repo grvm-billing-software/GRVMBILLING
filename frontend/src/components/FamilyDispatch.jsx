@@ -1,19 +1,21 @@
 import { useEffect, useState } from "react";
-import { api, localDate } from "../lib/api";
+import { api, localDate, fmtQty, qtyLabel, toStrips } from "../lib/api";
+import { QtyInput, qtyPayload } from "./QtyInput";
 import { toast } from "sonner";
 import { Search, Trash2 } from "lucide-react";
 
 export const FamilyDispatchModal = ({ meds, onClose, onSaved }) => {
-  const [form, setForm] = useState({ memberName: "", medicineId: "", quantity: 1, date: localDate(), givenBy: "", notes: "" });
+  const [form, setForm] = useState({ memberName: "", medicineId: "", quantity: 1, unit: "strip", date: localDate(), givenBy: "", notes: "" });
   const [saving, setSaving] = useState(false);
   const med = meds.find((m) => m.id === form.medicineId);
   const save = async () => {
     if (!form.memberName.trim() || !form.medicineId || !form.givenBy.trim()) return toast.error("Member name, medicine and given by are required");
-    if (!(Number(form.quantity) > 0)) return toast.error("Quantity must be more than 0");
-    if (med && Number(form.quantity) > med.quantity) return toast.error(`Only ${med.quantity} in stock`);
+    const strips = toStrips(med, form.unit, form.quantity);
+    if (!(strips > 0)) return toast.error("Quantity must be more than 0");
+    if (med && strips > med.quantity + 1e-9) return toast.error(`Only ${fmtQty(med.quantity)} strip in stock`);
     setSaving(true);
     try {
-      await api.post("/family-dispatches", { ...form, quantity: Number(form.quantity) });
+      await api.post("/family-dispatches", { ...form, ...qtyPayload(med, form.unit, form.quantity) });
       toast.success("Dispatched to family. Stock updated (not counted in revenue).");
       onSaved();
     } catch (err) { toast.error(err?.response?.data?.detail || "Could not save"); }
@@ -30,10 +32,10 @@ export const FamilyDispatchModal = ({ meds, onClose, onSaved }) => {
           <L label="Medicine *" span>
             <select data-testid="family-medicine-select" value={form.medicineId} onChange={set("medicineId")} className="inp">
               <option value="">Select medicine</option>
-              {meds.map((m) => <option key={m.id} value={m.id} disabled={m.quantity <= 0}>{m.name} · {m.batchNumber} · stock {m.quantity}</option>)}
+              {meds.map((m) => <option key={m.id} value={m.id} disabled={m.quantity <= 0}>{m.name} · {m.batchNumber} · stock {fmtQty(m.quantity)}{m.tabletsPerStrip ? ` × ${m.tabletsPerStrip} tab` : ""}</option>)}
             </select>
           </L>
-          <L label="Quantity *"><input data-testid="family-qty-input" type="number" min="1" value={form.quantity} onChange={set("quantity")} className="inp" /></L>
+          <L label="Quantity *"><QtyInput testid="family-qty-input" med={med} unit={form.unit} qty={form.quantity} onChange={(v) => setForm({ ...form, unit: v.unit, quantity: v.qty })} /></L>
           <L label="Date *"><input data-testid="family-date-input" type="date" value={form.date} onChange={set("date")} className="inp" /></L>
           <L label="Took / given by *" span><input data-testid="family-givenby-input" value={form.givenBy} onChange={set("givenBy")} placeholder="Staff name" className="inp" /></L>
           <L label="Notes" span><input data-testid="family-notes-input" value={form.notes} onChange={set("notes")} className="inp" /></L>
@@ -79,7 +81,7 @@ export const FamilyHistory = ({ refreshKey, onChanged }) => {
                 <td className="px-4 py-3">{new Date(r.date).toLocaleDateString("en-IN")}</td>
                 <td className="px-4 py-3 font-medium">{r.memberName}</td>
                 <td className="px-4 py-3">{r.medicineName} <span className="font-mono text-xs text-slate-500">{r.batchNumber}</span></td>
-                <td className="px-4 py-3">{r.quantity}</td>
+                <td className="px-4 py-3">{qtyLabel(r.quantity, r.tablets)}</td>
                 <td className="px-4 py-3">{r.givenBy}</td>
                 <td className="px-4 py-3 text-slate-500">{r.notes || "—"}</td>
                 <td className="px-4 py-3 text-right"><button data-testid={`family-delete-${r.id}`} onClick={() => del(r)} className="text-red-600"><Trash2 className="w-4 h-4" /></button></td>

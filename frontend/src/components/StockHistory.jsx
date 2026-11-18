@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, fmtQty } from "../lib/api";
 
 const LABEL = { created: "Added", adjustment: "Adjusted", sale: "Sold (invoice)", returned: "Returned", family: "Family", ipd_use: "IPD use" };
 const COLOR = { sale: "text-indigo-700", family: "text-amber-700", ipd_use: "text-teal-700", returned: "text-green-700" };
@@ -19,8 +19,8 @@ export const StockHistory = ({ refreshKey }) => {
               <td className="px-4 py-3 text-xs text-slate-500">{new Date(l.createdAt).toLocaleString("en-IN")}</td>
               <td className="px-4 py-3 font-medium">{l.medicineName} <span className="font-mono text-xs text-slate-500">{l.batchNumber}</span></td>
               <td className={`px-4 py-3 font-medium ${COLOR[l.action] || ""}`}>{LABEL[l.action] || l.action}</td>
-              <td className={`px-4 py-3 font-mono ${l.quantityChange < 0 ? "text-red-600" : "text-green-700"}`}>{l.quantityChange > 0 ? `+${l.quantityChange}` : l.quantityChange}</td>
-              <td className="px-4 py-3">{l.quantityAfter}</td>
+              <td className={`px-4 py-3 font-mono ${l.quantityChange < 0 ? "text-red-600" : "text-green-700"}`}>{l.quantityChange > 0 ? `+${fmtQty(l.quantityChange)}` : fmtQty(l.quantityChange)}</td>
+              <td className="px-4 py-3">{fmtQty(l.quantityAfter)}</td>
               <td className="px-4 py-3 text-slate-500 text-xs">{l.notes}</td>
             </tr>
           ))}

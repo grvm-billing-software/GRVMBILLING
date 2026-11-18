@@ -26,3 +26,13 @@ export const localDate = () => {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
+
+export const MED_TYPES = ["Tablet", "Capsule", "Injection", "Syrup", "Powder", "Other"];
+
+export const fmtQty = (n) => String(Number(Number(n || 0).toFixed(2)));
+
+export const qtyLabel = (quantity, tablets) => (tablets ? `${fmtQty(quantity)} (${tablets} tab)` : fmtQty(quantity));
+
+export const canSplit = (med) => !!med && Number(med.tabletsPerStrip) > 0;
+
+export const toStrips = (med, unit, qty) => (unit === "tab" && canSplit(med) ? Number(qty || 0) / Number(med.tabletsPerStrip) : Number(qty || 0));

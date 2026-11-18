@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
-import { api } from "../lib/api";
+import { api, MED_TYPES, fmtQty } from "../lib/api";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, Search, Users } from "lucide-react";
 import { FamilyDispatchModal, FamilyHistory } from "../components/FamilyDispatch";
 import { StockHistory } from "../components/StockHistory";
 
-const EMPTY = { name: "", batchNumber: "", expiryDate: "", quantity: 0, tabletsPerStrip: 0, sellingCost: 0, mrp: 0, supplier: "", location: "", notes: "" };
+const EMPTY = { name: "", batchNumber: "", expiryDate: "", quantity: 0, medicineType: "Tablet", tabletsPerStrip: 0, sellingCost: 0, mrp: 0, supplier: "", location: "", notes: "" };
 const TABS = [["inventory", "Inventory"], ["family", "Family History"], ["stock", "Stock History"]];
 
 export default function Medicines() {
@@ -89,7 +89,7 @@ export default function Medicines() {
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-500 text-xs uppercase tracking-wider">
-            <tr><th className="text-left px-4 py-3">Name</th><th className="text-left px-4 py-3">Batch</th><th className="text-left px-4 py-3">Expiry</th><th className="text-left px-4 py-3">Qty</th><th className="text-left px-4 py-3">Tablets / Strip</th><th className="text-left px-4 py-3">Selling</th><th className="text-left px-4 py-3">MRP</th><th></th></tr>
+            <tr><th className="text-left px-4 py-3">Name</th><th className="text-left px-4 py-3">Type</th><th className="text-left px-4 py-3">Batch</th><th className="text-left px-4 py-3">Expiry</th><th className="text-left px-4 py-3">Qty</th><th className="text-left px-4 py-3">Tablets / Strip</th><th className="text-left px-4 py-3">Selling</th><th className="text-left px-4 py-3">MRP</th><th></th></tr>
           </thead>
           <tbody>
             {list.map((m) => {
@@ -98,9 +98,10 @@ export default function Medicines() {
               return (
                 <tr key={m.id} className="border-t border-slate-100">
                   <td className="px-4 py-3 font-medium">{m.name}</td>
+                  <td className="px-4 py-3" data-testid={`med-type-${m.id}`}><span className="badge-soft bg-slate-100 text-slate-700">{m.medicineType || "—"}</span></td>
                   <td className="px-4 py-3 font-mono text-xs">{m.batchNumber}</td>
                   <td className={`px-4 py-3 ${expired ? "text-red-700 font-semibold" : ""}`}>{m.expiryDate}</td>
-                  <td className={`px-4 py-3 ${low ? "text-amber-700 font-semibold" : ""}`}>{m.quantity}</td>
+                  <td className={`px-4 py-3 ${low ? "text-amber-700 font-semibold" : ""}`}>{fmtQty(m.quantity)}</td>
                   <td className="px-4 py-3" data-testid={`med-tps-${m.id}`}>{m.tabletsPerStrip || "—"}</td>
                   <td className="px-4 py-3">₹{Number(m.sellingCost).toFixed(2)}</td>
                   <td className="px-4 py-3">₹{Number(m.mrp).toFixed(2)}</td>
@@ -111,7 +112,7 @@ export default function Medicines() {
                 </tr>
               );
             })}
-            {list.length === 0 && <tr><td colSpan="8" className="px-4 py-10 text-center text-slate-400" data-testid="medicine-empty">{filtered ? "No medicines match your search." : "No medicines yet."}</td></tr>}
+            {list.length === 0 && <tr><td colSpan="9" className="px-4 py-10 text-center text-slate-400" data-testid="medicine-empty">{filtered ? "No medicines match your search." : "No medicines yet."}</td></tr>}
           </tbody>
         </table>
       </div>
@@ -121,14 +122,23 @@ export default function Medicines() {
           <div className="bg-white rounded-xl max-w-2xl w-full p-6" onClick={(e) => e.stopPropagation()}>
             <h2 className="font-display text-xl font-bold mb-4">{editId ? "Edit" : "Add"} Medicine</h2>
             <div className="grid grid-cols-2 gap-3">
+              <label className="block col-span-2">
+                <span className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1 block">Medicine Type *</span>
+                <div className="flex flex-wrap gap-2">
+                  {MED_TYPES.map((t) => (
+                    <button type="button" key={t} data-testid={`med-type-option-${t}`} onClick={() => setForm({ ...form, medicineType: t })}
+                      className={`px-3 py-1.5 rounded-full text-sm font-medium border ${form.medicineType === t ? "bg-[hsl(var(--brand))] text-white border-[hsl(var(--brand))]" : "border-slate-200 text-slate-600"}`}>{t}</button>
+                  ))}
+                </div>
+              </label>
               {[
                 ["name", "Name *"], ["batchNumber", "Batch *"], ["expiryDate", "Expiry Date *", "date"],
-                ["quantity", "Quantity", "number"], ["tabletsPerStrip", "Tablets per Strip", "number"], ["sellingCost", "Selling Cost ₹", "number"], ["mrp", "MRP ₹", "number"],
+                ["quantity", "Stock (strips / units)", "number"], ["tabletsPerStrip", "Tablets per Strip", "number"], ["sellingCost", "Selling Cost ₹ (per strip)", "number"], ["mrp", "MRP ₹ (per strip)", "number"],
                 ["supplier", "Supplier"], ["location", "Location"],
               ].map(([k, l, type]) => (
                 <label key={k} className="block">
                   <span className="text-xs uppercase tracking-wider text-slate-500 font-medium mb-1 block">{l}</span>
-                  <input data-testid={`med-${k}-input`} type={type || "text"} value={form[k] ?? ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })}
+                  <input data-testid={`med-${k}-input`} type={type || "text"} min={type === "number" ? "0" : undefined} step={type === "number" ? "any" : undefined} value={form[k] ?? ""} onChange={(e) => setForm({ ...form, [k]: e.target.value })}
                     className="w-full px-3 py-2 border border-slate-200 rounded-lg outline-none focus:border-[hsl(var(--brand))]" />
                 </label>
               ))}

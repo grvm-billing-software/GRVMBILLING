@@ -1,5 +1,5 @@
 import { Printer, X, Ban } from "lucide-react";
-import { api } from "../lib/api";
+import { api, qtyLabel } from "../lib/api";
 import { toast } from "sonner";
 
 const money = (n) => `₹${Number(n || 0).toFixed(2)}`;
@@ -50,7 +50,7 @@ export const InvoicePrint = ({ bill, settings, onClose, onChanged }) => {
                     <td className="border border-slate-300 px-2 py-1">{l.medicineName}</td>
                     <td className="border border-slate-300 px-2 py-1 font-mono text-xs">{l.batchNumber}</td>
                     <td className="border border-slate-300 px-2 py-1">{l.mrp ? money(l.mrp) : "—"}</td>
-                    <td className="border border-slate-300 px-2 py-1">{l.quantity}</td>
+                    <td className="border border-slate-300 px-2 py-1" data-testid={`invoice-line-qty-${i}`}>{qtyLabel(l.quantity, l.tablets)}</td>
                     <td className="border border-slate-300 px-2 py-1 text-right">{money(l.lineTotal)}</td>
                   </tr>
                 ))}
